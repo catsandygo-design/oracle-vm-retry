@@ -1,0 +1,101 @@
+name: Criar VM Oracle quando houver capacidade
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oracle-vm-create
+  cancel-in-progress: false
+
+jobs:
+  create-vm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Validar configuração
+        env:
+          COMPARTMENT_OCID: ${{ vars.OCI_COMPARTMENT_OCID }}
+          SUBNET_OCID: ${{ vars.OCI_SUBNET_OCID }}
+          AVAILABILITY_DOMAIN: ${{ vars.OCI_AVAILABILITY_DOMAIN }}
+          IMAGE_OCID: ${{ vars.OCI_UBUNTU_ARM_IMAGE_OCID }}
+          SSH_PUBLIC_KEY: ${{ vars.OCI_SSH_PUBLIC_KEY }}
+          OCI_CONFIG_CONTENT: ${{ secrets.OCI_CONFIG_CONTENT }}
+          OCI_PRIVATE_KEY_PEM: ${{ secrets.OCI_PRIVATE_KEY_PEM }}
+        run: |
+          set -euo pipefail
+          for name in COMPARTMENT_OCID SUBNET_OCID AVAILABILITY_DOMAIN IMAGE_OCID SSH_PUBLIC_KEY OCI_CONFIG_CONTENT OCI_PRIVATE_KEY_PEM; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Falta configurar a variável ou secret ${name} nas configurações do repositório."
+              exit 1
+            fi
+          done
+
+      - name: Preparar OCI CLI
+        env:
+          OCI_CONFIG_CONTENT: ${{ secrets.OCI_CONFIG_CONTENT }}
+          OCI_PRIVATE_KEY_PEM: ${{ secrets.OCI_PRIVATE_KEY_PEM }}
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/oci-venv"
+          "$RUNNER_TEMP/oci-venv/bin/pip" install --quiet oci-cli
+          mkdir -p "$HOME/.oci"
+          printf '%s\n' "$OCI_CONFIG_CONTENT" > "$HOME/.oci/config"
+          printf '%s\n' "$OCI_PRIVATE_KEY_PEM" > "$HOME/.oci/oci_api_key.pem"
+          chmod 600 "$HOME/.oci/config" "$HOME/.oci/oci_api_key.pem"
+          echo "$RUNNER_TEMP/oci-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Tentar criar VM (1 OCPU, 6 GB)
+        env:
+          COMPARTMENT_OCID: ${{ vars.OCI_COMPARTMENT_OCID }}
+          SUBNET_OCID: ${{ vars.OCI_SUBNET_OCID }}
+          AVAILABILITY_DOMAIN: ${{ vars.OCI_AVAILABILITY_DOMAIN }}
+          IMAGE_OCID: ${{ vars.OCI_UBUNTU_ARM_IMAGE_OCID }}
+          SSH_PUBLIC_KEY: ${{ vars.OCI_SSH_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          INSTANCE_NAME="oracle-vm-retry"
+
+          # Evita duplicar a instância se uma tentativa anterior criou a VM,
+          # mas a execução do GitHub perdeu a resposta.
+          EXISTING_ID="$(oci compute instance list \
+            --compartment-id "$COMPARTMENT_OCID" --all \
+            --query "data[?\`display-name\`=='$INSTANCE_NAME' && \`lifecycle-state\`!='TERMINATED'] | [0].id" \
+            --raw-output 2>/dev/null || true)"
+          if [ -n "$EXISTING_ID" ] && [ "$EXISTING_ID" != "null" ]; then
+            echo "A VM já existe: $EXISTING_ID. Não será criada outra."
+            exit 0
+          fi
+
+          printf '%s\n' "$SSH_PUBLIC_KEY" > "$RUNNER_TEMP/oci_vm_ssh.pub"
+          set +e
+          oci compute instance launch \
+            --availability-domain "$AVAILABILITY_DOMAIN" \
+            --compartment-id "$COMPARTMENT_OCID" \
+            --display-name "$INSTANCE_NAME" \
+            --shape "VM.Standard.A1.Flex" \
+            --shape-config '{"ocpus":1,"memoryInGBs":6}' \
+            --subnet-id "$SUBNET_OCID" \
+            --image-id "$IMAGE_OCID" \
+            --ssh-authorized-keys-file "$RUNNER_TEMP/oci_vm_ssh.pub" \
+            --assign-public-ip true \
+            --wait-for-state RUNNING \
+            --max-wait-seconds 600
+          RESULT=$?
+          set -e
+
+          if [ "$RESULT" -eq 0 ]; then
+            echo "Solicitação aceita. Confira o estado da VM no Console Oracle."
+            exit 0
+          fi
+
+          if [ "$RESULT" -eq 1 ]; then
+            echo "::error::Falha na criação. Consulte o log acima; o erro pode ser de configuração, cota ou capacidade."
+          fi
+
+          echo "::error::A tentativa falhou. O workflow agendado tentará novamente no próximo ciclo se a falha for por falta de capacidade."
+          exit "$RESULT"
