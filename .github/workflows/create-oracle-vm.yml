@@ -63,7 +63,7 @@ jobs:
           # Se uma execução anterior criou a VM, não dispara uma segunda.
           EXISTING_ID="$(oci compute instance list \
             --compartment-id "$COMPARTMENT_OCID" --all \
-            --query "data[?\\"display-name\\" == '$INSTANCE_NAME' && \\"lifecycle-state\\" != 'TERMINATED'] | [0].id" \
+            --query "data[?\"display-name\" == '$INSTANCE_NAME' && \"lifecycle-state\" != 'TERMINATED'] | [0].id" \
             --raw-output 2>/dev/null || true)"
           if [ -n "$EXISTING_ID" ] && [ "$EXISTING_ID" != "null" ]; then
             echo "A VM já existe: $EXISTING_ID. Não será criada outra."
