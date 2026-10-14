@@ -30,7 +30,7 @@ jobs:
           set -euo pipefail
           for name in COMPARTMENT_OCID SUBNET_OCID AVAILABILITY_DOMAIN IMAGE_OCID SSH_PUBLIC_KEY OCI_CONFIG_CONTENT OCI_PRIVATE_KEY_PEM; do
             if [ -z "${!name:-}" ]; then
-              echo "::error::Falta configurar a variável ou secret ${name} nas configurações do repositório."
+              echo "::error::Falta configurar ${name} nas configurações do repositório."
               exit 1
             fi
           done
@@ -60,11 +60,10 @@ jobs:
           set -euo pipefail
           INSTANCE_NAME="oracle-vm-retry"
 
-          # Evita duplicar a instância se uma tentativa anterior criou a VM,
-          # mas a execução do GitHub perdeu a resposta.
+          # Se uma execução anterior criou a VM, não dispara uma segunda.
           EXISTING_ID="$(oci compute instance list \
             --compartment-id "$COMPARTMENT_OCID" --all \
-            --query "data[?\`display-name\`=='$INSTANCE_NAME' && \`lifecycle-state\`!='TERMINATED'] | [0].id" \
+            --query "data[?\\"display-name\\" == '$INSTANCE_NAME' && \\"lifecycle-state\\" != 'TERMINATED'] | [0].id" \
             --raw-output 2>/dev/null || true)"
           if [ -n "$EXISTING_ID" ] && [ "$EXISTING_ID" != "null" ]; then
             echo "A VM já existe: $EXISTING_ID. Não será criada outra."
@@ -84,18 +83,20 @@ jobs:
             --ssh-authorized-keys-file "$RUNNER_TEMP/oci_vm_ssh.pub" \
             --assign-public-ip true \
             --wait-for-state RUNNING \
-            --max-wait-seconds 600
-          RESULT=$?
+            --max-wait-seconds 600 \
+            2>&1 | tee "$RUNNER_TEMP/oracle-launch.log"
+          RESULT=${PIPESTATUS[0]}
           set -e
 
           if [ "$RESULT" -eq 0 ]; then
-            echo "Solicitação aceita. Confira o estado da VM no Console Oracle."
+            echo "VM criada e em execução."
             exit 0
           fi
 
-          if [ "$RESULT" -eq 1 ]; then
-            echo "::error::Falha na criação. Consulte o log acima; o erro pode ser de configuração, cota ou capacidade."
+          if grep -Eiq 'capacity|out of host|insufficient host' "$RUNNER_TEMP/oracle-launch.log"; then
+            echo "A Oracle ainda não tem capacidade. Nova tentativa automática em até 30 minutos."
+            exit 0
           fi
 
-          echo "::error::A tentativa falhou. O workflow agendado tentará novamente no próximo ciclo se a falha for por falta de capacidade."
+          echo "::error::Falha diferente de falta de capacidade. Corrija a configuração; o próximo ciclo agendado também verificará novamente."
           exit "$RESULT"
