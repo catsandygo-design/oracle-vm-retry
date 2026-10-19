@@ -44,6 +44,8 @@ jobs:
         env:
           OCI_CONFIG_CONTENT: ${{ secrets.OCI_CONFIG_CONTENT }}
           OCI_PRIVATE_KEY_PEM: ${{ secrets.OCI_PRIVATE_KEY_PEM }}
+          REGION: ${{ vars.OCI_REGION }}
+          TENANCY_OCID: ${{ vars.OCI_TENANCY_OCID }}
         run: |
           set -euo pipefail
           python3 -m venv "$RUNNER_TEMP/oci-venv"
@@ -52,6 +54,12 @@ jobs:
           printf '%s\n' "$OCI_CONFIG_CONTENT" > "$HOME/.oci/config"
           printf '%s\n' "$OCI_PRIVATE_KEY_PEM" > "$HOME/.oci/oci_api_key.pem"
           chmod 600 "$HOME/.oci/config" "$HOME/.oci/oci_api_key.pem"
+          CONFIG_REGION="$(awk -F= '/^[[:space:]]*region[[:space:]]*=/ {gsub(/[[:space:]]/, "", $2); print $2; exit}' "$HOME/.oci/config")"
+          CONFIG_TENANCY="$(awk -F= '/^[[:space:]]*tenancy[[:space:]]*=/ {gsub(/[[:space:]]/, "", $2); print $2; exit}' "$HOME/.oci/config")"
+          if [ "$CONFIG_REGION" != "$REGION" ] || [ "$CONFIG_TENANCY" != "$TENANCY_OCID" ]; then
+            echo "::error::A região ou tenancy do OCI_CONFIG_CONTENT não corresponde às variáveis OCI_REGION e OCI_TENANCY_OCID."
+            exit 1
+          fi
           echo "$RUNNER_TEMP/oci-venv/bin" >> "$GITHUB_PATH"
 
       - name: Confirmar que a região é a região home
@@ -105,8 +113,6 @@ jobs:
 
           compartments = json.loads(compartments_path.read_text()).get("data", [])
           ids = {i.get("id") for i in compartments if i.get("id") and i.get("lifecycle-state") == "ACTIVE"}
-          ids.add(json.loads((temp / "compartments.json").read_text()).get("data", [{}])[0].get("compartment-id", ""))
-          # O OCID da tenancy é obtido da variável de ambiente e incluído pelo shell abaixo.
           import os
           ids.add(os.environ["TENANCY_OCID"])
           ads = [x.get("name") for x in json.loads(ads_path.read_text()).get("data", []) if x.get("name")]
