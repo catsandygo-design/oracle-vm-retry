@@ -160,14 +160,14 @@ jobs:
               for volume in data:
                   if volume.get("lifecycle-state") not in ("TERMINATED", "TERMINATING", "DELETING"):
                       total += float(volume.get("size-in-gbs", 0))
-          if total + 47 > 200:
-              print(f"::error::Criação bloqueada: volumes existentes somam {total:g} GB; a VM precisa de 47 GB e o limite combinado Always Free é 200 GB.")
+          if total + 48 > 200:
+              print(f"::error::Criação bloqueada: volumes existentes somam {total:g} GB; a VM precisa de 48 GB e o limite combinado Always Free é 200 GB.")
               raise SystemExit(1)
-          print(f"Pré-checagem de volumes aprovada: {total:g} GB existentes; serão usados 47 GB.")
+          print(f"Pré-checagem de volumes aprovada: {total:g} GB existentes; serão usados 48 GB.")
           PY
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
-      - name: Tentar criar VM A1 elegível ao Always Free (1 OCPU, 6 GB, volume 47 GB)
+      - name: Tentar criar VM A1 elegível ao Always Free (1 OCPU, 6 GB, volume 48 GB)
         if: steps.preflight.outputs.skip != 'true'
         env:
           COMPARTMENT_OCID: ${{ vars.OCI_COMPARTMENT_OCID }}
@@ -192,7 +192,7 @@ jobs:
               --image-id "$IMAGE_OCID" \
               --ssh-authorized-keys-file "$RUNNER_TEMP/oci_vm_ssh.pub" \
               --assign-public-ip false \
-              --boot-volume-size-in-gbs 47 \
+              --boot-volume-size-in-gbs 48 \
               --wait-for-state RUNNING \
               --max-wait-seconds 600 \
               2>&1 | tee "$RUNNER_TEMP/oracle-launch.log"
