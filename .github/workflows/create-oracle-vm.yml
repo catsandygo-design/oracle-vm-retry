@@ -88,38 +88,49 @@ jobs:
           TENANCY_OCID: ${{ vars.OCI_TENANCY_OCID }}
         run: |
           set -euo pipefail
-          # Consulta a tenancy inteira. Se qualquer consulta falhar, o fluxo para sem criar.
-          oci compute instance list --compartment-id "$TENANCY_OCID" --compartment-id-in-subtree true --all --output json > "$RUNNER_TEMP/instances.json"
+          # Lista os compartimentos e consulta cada um individualmente. Se uma consulta falhar, para sem criar.
           oci iam compartment list --compartment-id "$TENANCY_OCID" --compartment-id-in-subtree true --all --output json > "$RUNNER_TEMP/compartments.json"
           oci iam availability-domain list --compartment-id "$TENANCY_OCID" --output json > "$RUNNER_TEMP/ads.json"
 
-          python3 - "$RUNNER_TEMP/instances.json" "$RUNNER_TEMP/compartments.json" "$RUNNER_TEMP/ads.json" "$RUNNER_TEMP" <<'PY'
-          import json, pathlib, sys
-          instances_path, compartments_path, ads_path, temp = map(pathlib.Path, sys.argv[1:])
-          instances = json.loads(instances_path.read_text()).get("data", [])
+          python3 - "$RUNNER_TEMP/compartments.json" "$RUNNER_TEMP/ads.json" "$RUNNER_TEMP" <<'PY'
+          import json, os, pathlib, sys
+          compartments_path, ads_path, temp = map(pathlib.Path, sys.argv[1:])
+          compartments = json.loads(compartments_path.read_text()).get("data", [])
+          ids = {i.get("id") for i in compartments if i.get("id") and i.get("lifecycle-state") == "ACTIVE"}
+          ids.add(os.environ["TENANCY_OCID"])
+          ads = [x.get("name") for x in json.loads(ads_path.read_text()).get("data", []) if x.get("name")]
+          (temp / "compartment-ids.txt").write_text("\\n".join(sorted(ids)))
+          (temp / "availability-domains.txt").write_text("\\n".join(ads))
+          if not ads:
+              print("::error::Não foi possível identificar os domínios de disponibilidade.")
+              raise SystemExit(1)
+          PY
+
+          mkdir -p "$RUNNER_TEMP/instance-lists"
+          compartment_index=0
+          while IFS= read -r compartment; do
+            [ -n "$compartment" ] || continue
+            oci compute instance list --compartment-id "$compartment" --all --output json > "$RUNNER_TEMP/instance-lists/instances-$compartment_index.json"
+            compartment_index=$((compartment_index + 1))
+          done < "$RUNNER_TEMP/compartment-ids.txt"
+
+          python3 - "$RUNNER_TEMP/instance-lists" "$RUNNER_TEMP" <<'PY'
+          import glob, json, os, pathlib, sys
+          temp = pathlib.Path(sys.argv[2])
+          instances = []
+          for filename in glob.glob(str(pathlib.Path(sys.argv[1]) / "*.json")):
+              instances.extend(json.loads(pathlib.Path(filename).read_text()).get("data", []))
           active = [i for i in instances if i.get("lifecycle-state") != "TERMINATED"]
           existing = [i for i in active if i.get("display-name") == "oracle-vm-retry"]
           if existing:
               print(f"::notice::A VM oracle-vm-retry já existe ({existing[0].get('id')}); nenhuma nova VM será criada.")
               (temp / "already-exists").write_text("yes")
               raise SystemExit(0)
-
           a1 = [i for i in active if i.get("shape") == "VM.Standard.A1.Flex"]
           ocpus = sum(float((i.get("shape-config") or {}).get("ocpus", 0)) for i in a1)
           memory = sum(float((i.get("shape-config") or {}).get("memory-in-gbs", 0)) for i in a1)
           if ocpus + 1 > 2 or memory + 6 > 12:
               print(f"::error::Criação bloqueada pelo teto Always Free: A1 existente {ocpus:g} OCPU/{memory:g} GB; nova VM exige 1 OCPU/6 GB; limite Always Free é 2 OCPU/12 GB.")
-              raise SystemExit(1)
-
-          compartments = json.loads(compartments_path.read_text()).get("data", [])
-          ids = {i.get("id") for i in compartments if i.get("id") and i.get("lifecycle-state") == "ACTIVE"}
-          import os
-          ids.add(os.environ["TENANCY_OCID"])
-          ads = [x.get("name") for x in json.loads(ads_path.read_text()).get("data", []) if x.get("name")]
-          (temp / "compartment-ids.txt").write_text("\n".join(sorted(ids - {""})))
-          (temp / "availability-domains.txt").write_text("\n".join(ads))
-          if not ads:
-              print("::error::Não foi possível identificar os domínios de disponibilidade.")
               raise SystemExit(1)
           print(f"Pré-checagem de compute aprovada: A1 existente {ocpus:g} OCPU/{memory:g} GB.")
           PY
