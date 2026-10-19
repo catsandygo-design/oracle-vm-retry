@@ -99,8 +99,8 @@ jobs:
           ids = {i.get("id") for i in compartments if i.get("id") and i.get("lifecycle-state") == "ACTIVE"}
           ids.add(os.environ["TENANCY_OCID"])
           ads = [x.get("name") for x in json.loads(ads_path.read_text()).get("data", []) if x.get("name")]
-          (temp / "compartment-ids.txt").write_text("\\n".join(sorted(ids)))
-          (temp / "availability-domains.txt").write_text("\\n".join(ads))
+          (temp / "compartment-ids.txt").write_text("\n".join(sorted(ids)))
+          (temp / "availability-domains.txt").write_text("\n".join(ads))
           if not ads:
               print("::error::Não foi possível identificar os domínios de disponibilidade.")
               raise SystemExit(1)
