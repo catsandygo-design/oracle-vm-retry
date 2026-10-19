@@ -7,7 +7,7 @@ Este repositório tenta criar uma única VM Ubuntu ARM na Oracle Cloud quando ho
 - Usa somente `VM.Standard.A1.Flex`, com **1 OCPU e 6 GB de memória**.
 - Só executa na **região home** da tenancy.
 - Antes de criar, consulta as instâncias A1 e os volumes em todos os compartimentos acessíveis. Para e falha se a nova VM exceder o limite Always Free do Oracle para tenancy Always Free: **2 OCPUs, 12 GB de memória ou 200 GB de armazenamento combinado**.
-- Usa um volume de inicialização de **47 GB**, sem volumes extras e sem backup automático configurado.
+- Usa um volume de inicialização de **48 GB**, sem volumes extras e sem backup automático configurado.
 - Não atribui IPv4 público e não tenta formas, imagens licenciadas, volumes ou serviços pagos como alternativa.
 - Se não houver capacidade em um domínio, tenta os outros domínios da região home. Se todos estiverem lotados, o próximo ciclo tenta novamente.
 - Se já existir uma VM chamada `oracle-vm-retry`, não cria outra.
